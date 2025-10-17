@@ -9,6 +9,10 @@ A complete **Data Analytics and Machine Learning project** that predicts custome
 The **Customer Churn Prediction & Sales Dashboard** helps businesses understand customer behavior, identify churn risks, and improve retention strategies.  
 It combines **Machine Learning**, **Time-Series Forecasting**, and **Data Visualization** in one unified dashboard.
 
+## Deshboard url
+
+Url - https://sidharaj108-customer-churn-prediction-dashboard-app-jymxuh.streamlit.app/
+
 ---
 
 ## 🚀 Features
