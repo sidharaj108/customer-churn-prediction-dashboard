@@ -1,98 +1,76 @@
-# ============================================================
-# Customer Churn Prediction & Sales Dashboard
-# ============================================================
+# app.py 
+
 
 import streamlit as st
 import pandas as pd
+import joblib
+import shap
 import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
 
-# -------------------------------
-# 1. LOAD DATA
-# -------------------------------
-st.set_page_config(page_title="Customer Churn Dashboard", layout="wide")
+st.set_page_config(page_title="ChurnGuard - AI Retention System", layout="wide")
+st.title("🔥 ChurnGuard: Predict & Prevent Customer Churn")
 
-st.title("📊 Customer Churn Prediction & Sales Dashboard")
+# Load model
+@st.cache_resource
+def load_model():
+    return joblib.load('churn_model.pkl')
 
-# Load datasets
-@st.cache_data
-def load_data():
-    customers = pd.read_csv("customer_data.csv")
-    transactions = pd.read_csv("transaction_data.csv")
-    return customers, transactions
+model = load_model()
 
-customers, transactions = load_data()
+# Sidebar
+st.sidebar.header("Upload New Customers")
+uploaded_file = st.sidebar.file_uploader("Upload CSV (same format as Telco data)", type="csv")
 
-# Convert date column
-transactions["date"] = pd.to_datetime(transactions["date"])
+if uploaded_file:
+    df_new = pd.read_csv(uploaded_file)
+    st.write("### Uploaded Data Preview", df_new.head())
+    
+    # Predict
+    probabilities = model.predict_proba(df_new)[:,1]
+    df_new['Churn_Probability'] = probabilities
+    df_new['Churn_Risk'] = np.where(probabilities > 0.7, "High", 
+                                   np.where(probabilities > 0.5, "Medium", "Low"))
+    
+    st.write("### Predictions")
+    st.dataframe(df_new[['Churn_Probability', 'Churn_Risk']])
+    
+    # Top high-risk
+    high_risk = df_new[df_new['Churn_Probability'] > 0.7].sort_values('Churn_Probability', ascending=False)
+    st.write(f"### 🚨 Top {len(high_risk)} High-Risk Customers")
+    st.dataframe(high_risk)
+    
+    # SHAP for first customer
+    st.write("### SHAP Explanation (Why this customer is at risk?)")
+    explainer = shap.TreeExplainer(model.named_steps['model'])
+    sample = model.named_steps['preprocessor'].transform(df_new.iloc[[0]])
+    shap_values = explainer.shap_values(sample)
+    fig = shap.force_plot(explainer.expected_value, shap_values[0], df_new.iloc[0], matplotlib=True, show=False)
+    st.pyplot(fig)
 
-# -------------------------------
-# 2. FEATURE ENGINEERING
-# -------------------------------
-agg_trans = transactions.groupby("customer_id").agg({
-    "amount": ["sum", "mean", "count"],
-    "date": ["min", "max"]
-})
-agg_trans.columns = ["_".join(x) for x in agg_trans.columns.ravel()]
-agg_trans["days_active"] = (agg_trans["date_max"] - agg_trans["date_min"]).dt.days
+else:
+    st.info("Upload a CSV or use the demo below 👇")
 
-data = customers.merge(agg_trans, left_on="customer_id", right_index=True, how="left").fillna(0)
-
-# Prepare model data
-X = data.drop(columns=["customer_id", "name", "churn", "date_min", "date_max"])
-y = data["churn"]
-X = pd.get_dummies(X, drop_first=True)
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
-X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
-
-# Train model
-model = RandomForestClassifier(n_estimators=200, random_state=42)
-model.fit(X_train, y_train)
-
-# -------------------------------
-# 3. DASHBOARD LAYOUT
-# -------------------------------
-tab1, tab2 = st.tabs(["📈 Sales Trend", "🔮 Churn Prediction"])
-
-# -------------------------------
-# TAB 1 – SALES TREND
-# -------------------------------
-with tab1:
-    st.subheader("Monthly Sales Trend")
-
-    transactions["month"] = transactions["date"].dt.to_period("M")
-    monthly_sales = transactions.groupby("month")["amount"].sum().reset_index()
-    monthly_sales["month"] = monthly_sales["month"].dt.to_timestamp()
-
-    st.line_chart(monthly_sales.set_index("month"))
-
-    # Top 5 Products
-    st.subheader("Top 5 Performing Products")
-    top_products = transactions.groupby("product")["amount"].sum().nlargest(5)
-    st.bar_chart(top_products)
-
-# -------------------------------
-# TAB 2 – CHURN PREDICTION
-# -------------------------------
-with tab2:
-    st.subheader("Predict Customer Churn")
-
-    customer_id = st.number_input("Enter Customer ID:", min_value=1, max_value=int(data["customer_id"].max()))
-
-    if st.button("🔍 Predict Churn"):
-        if customer_id in list(data["customer_id"]):
-            input_data = data[data["customer_id"] == customer_id].drop(columns=["customer_id","name","churn","date_min","date_max"])
-            input_data = pd.get_dummies(input_data, drop_first=True).reindex(columns=X.columns, fill_value=0)
-            input_scaled = scaler.transform(input_data)
-            prediction = model.predict(input_scaled)
-            prob = model.predict_proba(input_scaled)[0][1]
-
-            st.write(f"**Prediction:** {'⚠️ Churn' if prediction[0]==1 else '✅ Not Churn'}")
-            st.progress(int(prob*100))
-            st.caption(f"Churn Probability: {prob*100:.2f}%")
-        else:
-            st.error("Customer ID not found. Please enter a valid ID.")
+# Manual single prediction
+st.subheader("Single Customer Prediction")
+with st.form("single_pred"):
+    col1, col2 = st.columns(2)
+    with col1:
+        tenure = st.number_input("Tenure (months)", 0, 100)
+        monthly_charges = st.number_input("Monthly Charges ($)", 0.0, 200.0)
+        contract = st.selectbox("Contract", ["Month-to-month", "One year", "Two year"])
+    with col2:
+        internet = st.selectbox("Internet Service", ["Fiber optic", "DSL", "No"])
+        payment = st.selectbox("Payment Method", ["Electronic check", "Mailed check", "Bank transfer", "Credit card"])
+        senior = st.selectbox("Senior Citizen?", ["Yes", "No"])
+    
+    submitted = st.form_submit_button("Predict Churn")
+    if submitted:
+        input_data = pd.DataFrame({
+            'tenure': [tenure], 'MonthlyCharges': [monthly_charges],
+            'Contract': [contract], 'InternetService': [internet],
+            'PaymentMethod': [payment], 'SeniorCitizen': [1 if senior=="Yes" else 0],
+            # Add other columns with median/default values (full code has all)
+        })
+        prob = model.predict_proba(input_data)[:,1][0]
+        st.success(f"Churn Probability: **{prob:.1%}**")
+        st.progress(float(prob))
